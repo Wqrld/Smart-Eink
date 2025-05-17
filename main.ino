@@ -7,6 +7,7 @@
 #include "config.h"
 #include <ESP8266WiFi.h>
 #include <ESP8266WiFiMulti.h>
+#include "user_interface.h"
 
 #include <ESP8266HTTPClient.h>
 
@@ -45,7 +46,10 @@ void setup() {
   Serial.println(myIP = WiFi.localIP()); //192.168.1.197
 }
 
-//uint8_t* buff;
+void fpm_wakup_cb_func(void) {
+  Serial.println("Light sleep is over, either because timeout or external interrupt");
+  Serial.flush();
+}
 
 void loop() {
   if ((WiFiMulti.run() != WL_CONNECTED)) {
@@ -137,7 +141,7 @@ void loop() {
   } else {
     Serial.printf("[HTTP] GET... failed, error: %s\n", http2.errorToString(httpCode).c_str());
   }
-  String time_until_next_hour_ms_s = http.header("time_until_next_hour_ms");
+  String time_until_next_hour_ms_s = http2.header("time_until_next_hour_ms");
   long time_until_next_hour_ms = strtol(time_until_next_hour_ms_s.c_str(), NULL, 10);
   Serial.println(time_until_next_hour_ms_s);
   http2.end();
@@ -151,6 +155,33 @@ void loop() {
   
 //  delay(600000);
 
+  WiFi.disconnect(); 
+  WiFi.mode(WIFI_OFF);
+  delay(3000);
 
-  delay(time_until_next_hour_ms);
+
+
+  long sleepTimeMilliSeconds = 240e3; // 240 seconds = 4 minutes
+  //0xFFFFFFE = 2^28-1 = 268435454 microseconds (~4 1/2 minutes)
+  long time_to_go = time_until_next_hour_ms;
+
+  while(time_to_go > sleepTimeMilliSeconds) {
+    extern os_timer_t *timer_list;
+    timer_list = nullptr;
+    wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
+    wifi_fpm_open();
+    // light sleep function requires microseconds
+    wifi_fpm_do_sleep(sleepTimeMilliSeconds * 1000);
+
+    // timed light sleep is only entered when the sleep command is
+    // followed by a delay() that is at least 1ms longer than the sleep
+    delay(sleepTimeMilliSeconds + 1);
+    time_to_go -= sleepTimeMilliSeconds;
+  }
+
+  delay(time_to_go); // remaining time
+  delay(60000); // for good measure
+  ESP.restart(); // todo: this might break because the initial boot requires reset to be pressed. Let's see..
+  delay(3000);
+  // delay(time_until_next_hour_ms);
 }
